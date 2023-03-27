@@ -1,0 +1,204 @@
+name: Continuos Integration
+on:
+  push:
+    branches:
+      - "hotfix/**"
+      - "bugfix/**"
+    paths-ignore:
+      - ".github/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - qa
+      - "release/**"
+    paths-ignore:
+      - ".github/**"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for Manual Execution"
+        required: true
+        type: string
+      skip_unit_tests:
+        description: "Skip Unit Tests"
+        default: false
+        type: boolean
+    # permissions:
+    #   teams:
+    #     - super-devs
+env:
+  JCR_URL: ${{ vars.ACR_URL }}
+  JCR_USERNAME: ${{ secrets.JCR_USERNAME }}
+  JCR_ACCESS_TOKEN: ${{ secrets.JFROG_ACCESS_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  K8S_CLUSTER_NAME: ${{ vars.K8S_CLUSTER_NAME }}
+  DEPLOYMENT_REPO_NAME: ${{ vars.DEPLOYMENT_REPO_NAME }}
+  DEPLOYMENT_REPO_OWNER: ${{ vars.DEPLOYMENT_REPO_OWNER }}
+  OVERRIDES_FILE_PATH: ${{ vars.OVERRIDES_FILE_PATH }}
+  K8S_LRS_NAMESPACE: ${{ vars.K8S_LRS_NAMESPACE }}
+jobs:
+  build:
+    runs-on: [self-hosted]
+    steps:
+        
+#       - name: Check Java version
+#         run: |
+#           JAVA_VERSION=$(java -version 2>&1 | grep -i version | sed 's/.*version "\(.*\)".*/\1/g')
+#           if [ "$JAVA_VERSION" != "17.0.6" ]; then
+#             echo "Java version 17.0.6 is required, current version is $JAVA_VERSION."
+#             exit 1
+#           else
+#             echo "Java version 17.0.6 detected. Proceeding with the workflow."
+#           fi
+
+#       - name: Check Maven version
+#         run: |
+#           MAVEN_VERSION=$(/opt/maven/bin/mvn --version | grep 'Apache Maven' | sed 's/Apache Maven //; s/\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/')
+#           if [ "$MAVEN_VERSION" != "3.9.0" ]; then
+#             echo "Maven version 3.9.0 is required, current version is $MAVEN_VERSION"
+#             exit 1
+#           else
+#             echo "Maven version 3.9.0 detected. Proceeding with the workflow."
+#           fi
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          clean: true
+      
+      - name: Setup Maven Action
+        uses: s4u/setup-maven-action@v1.2.1
+        with:
+          java-version: 11
+          maven-version: 3.6.3
+          
+      - name: Build with Maven
+        run: mvn clean package -DskipTests        
+
+      - name: Setup Java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+      
+#       - name: Build with Maven
+#         run: /opt/maven/bin/mvn clean package -DskipTests
+# #
+# #      - name: Execute Unit Tests
+# #        if: ${{ github.event.inputs.skip_unit_tests == false }}
+# #        run: /opt/maven/bin/mvn test
+
+#       # - name: Generate JaCoCo report
+#       #   run: /opt/maven/bin/mvn jacoco:report
+
+      - name: Extract Branch Name
+        id: ebn
+        run: echo "branch_name=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+      
+      - name: Azure Container Registry Login
+        uses: Azure/docker-login@v1
+        with:
+          # Container registry username
+          username: rbihdev
+          # Container registry password
+          password: p271sbmeosOkjXDyycGPlv6zwNlULGUaa4F8PMzIal+ACRDrCvSE
+          # Container registry server url
+          login-server: rbihdev.azurecr.io
+          
+      - name: Build Image
+        run: docker build . -t ${{ env.JCR_URL }}/${{ github.event.repository.name }}:latest
+
+      - name: Publish Image to JFrog Docker Registry
+        run: docker image push ${{ env.JCR_URL }}/${{ github.event.repository.name }}:latest
+      
+#       - name: Checkout Deployment Hub Repository
+#         uses: actions/checkout@v3
+#         with:
+#           repository: ${{ env.DEPLOYMENT_REPO_OWNER }}/${{ env.DEPLOYMENT_REPO_NAME }}
+#           ref: main
+#           path: deployment-hub
+
+#       - name: Download overrides YAML
+#         uses: actions/download-artifact@v2
+#         with:
+#           name: overrides-yaml
+#           path: ${{ env.OVERRIDES_FILE_PATH }}
+      
+      - name : Bake Manifest
+        run: |
+            helm template chart > ${{ github.event.repository.name }}-release.yaml
+            cat ${{ github.event.repository.name }}-release.yaml
+      
+#       - name: Delete Contents of Deployment Hub Repository
+#         run: |
+#           rm -rf deployment-hub/*
+#           rm -rf deployment-hub/.git
+#           rm -rf ${{ env.OVERRIDES_FILE_PATH }}/*
+      
+#       - name: Azure Login
+#         uses: Azure/login@v1.4.6
+#         with:
+#           creds: '{"clientId":"${{ env.CLIENT_ID }}","clientSecret":"${{ env.CLIENT_SECRET }}","subscriptionId":"${{ env.SUBSCRIPTION_ID }}","tenantId":"${{ env.TENANT_ID }}"}'
+      
+#       - name: Azure Login
+#         uses: Azure/login@v1
+#         with:
+#           creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
+        
+#       - name: Get AKS Credentials
+#         run: az aks get-credentials --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.K8S_CLUSTER_NAME }} --file 
+      
+#       - name: Kubernetes Set Context
+#         uses: Azure/k8s-set-context@v3.0
+#         with:
+#           kubeconfig: ./azure-k8s-config.yml
+#           cluster-name: ${{ env.K8S_CLUSTER_NAME }}
+      
+      - name: Configure and Deploy in K8s
+        run: |
+          # Azure Login
+          az login --service-principal \
+            --username $AZURE_CLIENT_ID \
+            --password $AZURE_CLIENT_SECRET \
+            --tenant $AZURE_TENANT_ID
+          
+          # Set Azure Subscription
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          
+          # Get AKS credentials and update kubeconfig
+          az aks get-credentials --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.K8S_CLUSTER_NAME }} --file=./ops-kubeconfig.yaml
+          
+          # Create Kubernetes context
+          #kubectl config set-context ops-kubecontext --kubeconfig=./ops-kubeconfig.yaml
+          
+          # Set Kubernetes context
+          #kubectl config use-context ops-kubecontext --kubeconfig=./ops-kubeconfig.yaml
+          
+          # Set Kube login to az cli
+          export KUBELOGIN_AZURECLI=true
+          
+          export AAD_LOGIN_METHOD=azurecli
+          
+          # Covert Kube Config
+          kubelogin convert-kubeconfig --kubeconfig ./ops-kubeconfig.yaml
+          
+          # Set KUBECONFIG environment variable
+          export KUBECONFIG=./ops-kubeconfig.yaml
+          
+          # Disable verification
+          #export AZURE_CLI_DISABLE_CONNECTION_VERIFICATION=true
+
+          # Apply Manifest
+          kubectl apply -f ${{ github.event.repository.name }}-release.yaml -n ${{ env.K8S_LRS_NAMESPACE }} 
+
+      - name: Azure Logout
+        run: |
+            az logout
+            az cache purge
+            az account clear
+      

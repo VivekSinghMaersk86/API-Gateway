@@ -1,0 +1,17 @@
+[ {
+  "operation" : "shift",
+  "spec" : {
+    "ownerDetail" : {
+      "*" : {
+        "AadharTokenNo" : "ownerDetail.[&1].aadhartkn",
+        "flnel" : "ownerDetail.[&1].lfullname",
+        "fatherName" : "ownerDetail.[&1].lfathername",
+        "ownerShare" : "ownerDetail.[&1].heirpcshr",
+        "address" : "ownerDetail.[&1].addr3",
+        "ownerCaste" : "ownerDetail.[&1].caste",
+        "ownershiptype" : "ownerDetail.[&1].heirtyp",
+        "flne" : "ownerDetail.[&1].fullname"
+      }
+    }
+  }
+} ]

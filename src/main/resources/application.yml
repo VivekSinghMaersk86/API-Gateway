@@ -1,0 +1,37 @@
+management:
+  endpoint:
+    health:
+      show-details: ALWAYS
+  endpoints:
+    web:
+      exposure:
+        include: "prometheus,health,info"
+spring:
+  application:
+    name: governmentservice
+    apiUser: admin
+    apiPassword: pass
+  jackson:
+    serialization:
+      fail-on-empty-beans: true
+app:
+  mp: 
+   url: https://webgisqc.co.in/WSMAPIT/MAPIT/
+   user: 
+   password: 
+   GetOwner : getOwnerDetails2
+  propertiesdump : false
+  privatekey : sslcert/private_key.pem
+  secretkey : RBIHSECRETKEY22022023
+  sigpassword : rbih
+  publickeypath : sslcert/public.pub
+  transliteration : 
+    #url : http://f299-35-221-45-7.ngrok.io/v1/transliterate?src_lang=hi&dest_lang=en
+    url : http://2706-34-148-136-201.ngrok.io/1.0/transliteration
+    user : 
+    password : 
+server:
+  port: 8091
+logging:
+  level:
+    root: INFO

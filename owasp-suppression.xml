@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Instructions to globally suppress: https://pages.github.ibm.com/managed-security/dept-it/#/systems/devsecops/owasp-dependency-check/5/runbooks/globally_suppress_finding -->
+<!-- Instructions to respond to findings: https://pages.github.ibm.com/managed-security/dept-it/#/systems/devsecops/owasp-dependency-check/5/runbooks/respond_to_findings -->
+<!-- Syntax: https://jeremylong.github.io/DependencyCheck/general/suppression.html -->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+  <suppress>
+    <notes><![CDATA[
+    file name: minimist:0.0.8
+
+    We're not using 0.0.8, this falsely is detected.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:npm/minimist@.*$</packageUrl>
+    <vulnerabilityName>CWE-94: Improper Control of Generation of Code ('Code Injection')</vulnerabilityName>
+  </suppress>
+</suppressions>

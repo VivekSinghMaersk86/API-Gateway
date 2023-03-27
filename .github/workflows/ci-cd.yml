@@ -1,0 +1,214 @@
+# This workflow will build and push a new container image to Azure registry,
+# and then will deploy a new image  to Azure  EKS, when a release is created
+#
+# Pre-Req
+# Ensure that below secrets are created 
+# REGISTRY - the registry used to store the images
+# GITOPS_ORG - The org  where the gitops repo is present
+# GITOPS_REPO - The gitops repo
+# GITOPS_DIR - The directory where charts/ manifest needs to be created per env (dev/stage) etc
+# GITOPS_USERNAME -  The github user that can be uased to checkin the code
+# GITOPS_TOKEN - The token for the github user
+
+
+name: Java CI - Build, Vulnerability check and  Push to Registry
+
+on:
+  workflow_dispatch: null
+# Environment variables available to all jobs and steps in this workflow  
+env:
+  dockerserver: rbih.jfrog.io/docker-trial
+  CI: true
+  JFROG_CLI_OFFER_CONFIG: false
+  JFROG_ACCESS_TOKEN: ${{ secrets.JFROG_ACCESS_TOKEN }}
+  ARTIFACTORY_SERVER_ID: jfrog-cloud
+  DOCKER_REPO: docker-trial
+  DOCKER_TAG: latest
+  GITHUB_SHA: ${{ github.sha }}
+  GITOPS_REPO: ${{ secrets.GITOPS_ORG }}/${{ secrets.GITOPS_REPO }}
+  GITOPS_DIR: ${{ secrets.GITOPS_DEPLOYMENT_DIR }}
+  GITOPS_USERNAME: ${{ secrets.GITOPS_USERNAME }}
+  GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+  GITOPS_REPO_ONLY: ${{ secrets.GITOPS_REPO }}
+
+# Environment variables available to all jobs and steps in this workflow
+
+jobs:
+  setup-build-publish:
+    name: Setup, Build, Publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [self-hosted]
+        #maven: [  '3.6.3', '3.8.2' ]
+        #java: [  '11', '17']
+    environment: development
+    outputs:
+      tagname: ${{ steps.tagname.outputs.tag }}
+      reponame: ${{ steps.reponame.outputs.repo }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: get-reponame
+      run: |
+           echo "REPO_NAME=$(basename ${{ github.repository }})" >> $GITHUB_ENV
+    - name: print-reponame
+      run: |
+           echo "${{ env.REPO_NAME }}" 
+    - name: Setup Maven Action
+      uses: s4u/setup-maven-action@v1.2.1
+      with:
+        java-version: 11
+        maven-version: 3.6.3
+    - name: Build with Maven
+      run: mvn verify        
+    # Setup java
+    - name: Setup Java
+      uses: actions/setup-java@v1
+      with:
+        java-version: 11
+    # - name: Install maven
+    #   run: |
+    #         wget https://dlcdn.apache.org/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip 
+    #         unzip apache-maven-3.8.7-bin.zip
+    #         rm -rf apache-maven-3.8.7-bin.zip
+    #         mv apache-maven-3.8.7* /opt/hostedtoolcache/
+    #         ls -lrt /opt/hostedtoolcache
+    #         export PATH=/opt/hostedtoolcache/apache-maven-3.8.7/bin:$PATH
+    #         echo $PATH
+ 
+    # - name: Verify  maven
+    #   run: /opt/hostedtoolcache/apache-maven-3.8.7/bin/mvn -v
+    #    cache: 'maven'
+    
+    - name: Build and package app
+      id: unit-test
+      run: |
+           mvn clean package    
+    #- name: Set up Maven
+    #  uses: stCarolas/setup-maven@v4.3
+    #  with:
+    #    maven-version: 3.8.7    
+    # Build and package app
+    #- name: Build and package app
+    #  id: unit-test
+    #  run: |
+    #    mvn clean package
+        # verify
+        # cat target/failsafe-reports/failsafe-summary.xml
+        # grep -q "<failures>0</failures>" target/failsafe-reports/failsafe-summary.xml
+        # code=$?
+        # echo "ret: $code"
+        # if [[ $code -eq 0  ]]; then
+        #  echo "success"
+        #  echo '::set-output name=unit-test-result::success'
+        # else
+        #  echo "failed"
+        #  echo '::set-output name=unit-test-result::failed'
+        # fi
+       #   echo '::set-output name=unit-test-result::success'
+
+    - name: Extract branch name
+      shell: bash
+      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+      id: extract_branch
+    - name: Set Full Version
+      run: |
+              echo "FullVerion  $fullVersion"
+              echo "branch ${{ steps.extract_branch.outputs.branch }} "
+              echo "repo name ${{ github.event.repository.name }} "
+              echo "repo name again ${{ env.REPO_NAME }}"
+      env:
+          fullVersion : ${{ env.REPO_NAME }}:${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}
+    - id: tagname
+      run: echo "::set-output name=tag::${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}"      
+    - id: reponame
+      run: echo "::set-output name=repo::${{ env.REPO_NAME }}"   
+    - name: 'Build Image'
+      run: |
+          docker build . -t ${{ env.dockerserver }}/${{ env.REPO_NAME }}:${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}
+            
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ env.dockerserver }}/${{ env.REPO_NAME }}:${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}'
+        format: 'table'
+        exit-code: '0'
+        # commented the for now : exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+          #vuln-type: 'os'
+        severity: 'CRITICAL,HIGH'      
+    - name : prepare helmchart
+      run: |
+            helm template chart > ${{ env.REPO_NAME }}-release.yaml
+            cat ${{ env.REPO_NAME }}-release.yaml
+    - uses: actions/upload-artifact@v2
+      name: upload helmchart
+      with:
+        name: helmchart
+        path: ${{ env.REPO_NAME }}-release.yaml        
+    - name: 'Push Image'
+      run: |
+          jf docker image push ${{ env.dockerserver }}/${{ env.REPO_NAME }}:${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}
+  # update-gitops-repo:
+    # name: Publish image updates to gitops repo
+    # runs-on: ubuntu-latest
+    # needs: [setup-build-publish]
+    # steps:
+    #   - uses: actions/download-artifact@v2
+    #     name: download helmchart
+    #     with:
+    #       name: helmchart
+    #   - name: Update image name
+    #     run: |
+    #       set -x
+    #       set +e
+    #       ls -la
+    #       git clone https://$GITOPS_USERNAME:$GITOPS_TOKEN@github.kyndryl.net/$GITOPS_REPO.git
+    #       cd $GITOPS_REPO_ONLY
+    #       ## update manifests to new image and tag
+    #       APP_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
+    #       VERSION1=${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}
+    #       echo "${VERSION1}"
+    #       VERSION=${{needs.setup-build-publish.outputs.tagname}}
+    #       echo ${{needs.setup-build-publish.outputs.reponame}} 
+    #       echo "image-registry-path: ${{ steps.extract_branch.outputs.branch }}-${{ github.run_id }}"
+    #       echo "${APP_IMAGE}"
+    #       echo "${VERSION}"
+    #       ## Intall yq
+    #       wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    #       chmod a+x yq_linux_amd64 
+    #       mv yq_linux_amd64 /opt/hostedtoolcache/yq
+    #       export PATH=/opt/hostedtoolcache/yq:$PATH
+    #       echo $PATH
+    #       echo "print yq version"
+    #       /opt/hostedtoolcache/yq --version
+    #       echo "------- HELM CHART START---------"
+    #       FILE=${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}/${{needs.setup-build-publish.outputs.reponame}}-release.yaml 
+    #       if [ -f "$FILE" ]; then
+    #         echo "$FILE exists."
+    #         imageName=$( /opt/hostedtoolcache/yq '.spec.template.spec.containers[0].image' ${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}/${{needs.setup-build-publish.outputs.reponame}}-release.yaml | grep ${{needs.setup-build-publish.outputs.reponame}} )
+    #         echo "$imageName"
+    #         sed -i -e 's>'"$imageName"'>${{ env.dockerserver }}/${{needs.setup-build-publish.outputs.reponame}}:'"$VERSION"'>g' ${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}/${{needs.setup-build-publish.outputs.reponame}}-release.yaml 
+    #       else 
+    #         echo "$FILE does not exist."
+    #         cp ../${{needs.setup-build-publish.outputs.reponame}}-release.yaml  ${{needs.setup-build-publish.outputs.reponame}}-release.yaml
+    #         sed -i -e 's/release-name/${{needs.setup-build-publish.outputs.reponame}}/g' ${{needs.setup-build-publish.outputs.reponame}}-release.yaml
+    #         sed -i -e 's/${{needs.setup-build-publish.outputs.reponame}}-${{needs.setup-build-publish.outputs.reponame}}/${{needs.setup-build-publish.outputs.reponame}}/g' ${{needs.setup-build-publish.outputs.reponame}}-release.yaml
+    #         mkdir ${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}
+    #         sed -i -e 's/${{needs.setup-build-publish.outputs.reponame}}:latest/${{needs.setup-build-publish.outputs.reponame}}:'"$VERSION"'/g' ${{needs.setup-build-publish.outputs.reponame}}-release.yaml
+    #         cp ${{needs.setup-build-publish.outputs.reponame}}-release.yaml ${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}/
+    #       fi
+    #       cat ${GITOPS_DIR}/${{needs.setup-build-publish.outputs.reponame}}/${{needs.setup-build-publish.outputs.reponame}}-release.yaml 
+    #       ls -lrt ${GITOPS_DIR}         
+    #       if [[ $(git status -s | wc -l) -eq 0 ]]; then
+    #         echo "No changes"
+    #         exit 0
+    #       fi
+    #       git add "${GITOPS_DIR}/"
+    #       git config --global user.name 'GH Actions'
+    #       git config --global user.email 'github-actions@users.noreply.github.com'        
+    #       git commit -am "Updates ${APP_NAME} to ${VERSION}"   
+    #       git push https://$GITOPS_USERNAME:$GITOPS_TOKEN@github.kyndryl.net/$GITOPS_REPO 
